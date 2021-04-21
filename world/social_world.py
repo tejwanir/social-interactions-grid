@@ -9,7 +9,7 @@ import pygame
 class SocialGui(object):
     def __init__(self, env, width=7, height=7,
                  is_headless=False, width_px=300, height_px=300,
-                 img_path='env/images/',
+                 img_path='world/images/',
                  caption='SocialWorld Simulator'):
         if is_headless:
             os.environ['SDL_VIDEODRIVER'] = 'dummy'
