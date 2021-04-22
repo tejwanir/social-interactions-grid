@@ -24,9 +24,11 @@ class SIPomdp:
                 for v_index,_ in enumerate(self.other_agent_actions):
                     immediate_R = self.reward[s_index][u_index][v_index] * other_agent_policy[s_index][v_index] * s_value
                     action_value = action_value + immediate_R + self.discount * self.sum_over_trans_value(s_index, u_index, v_index, other_agent_policy, horizon)
+                    print('action value = ', action_value)
 
                 if action_value > max_value:
                     max_value = action_value
+                    print('u_index = ', u_index)
                     opt_action = u_index
 
         return opt_action
