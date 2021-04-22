@@ -21,6 +21,7 @@ class BeliefPomdp:
                     ret_policy[s][u] = ret_policy[s][u] + other_agent_policy[s][v] * (self.reward[s][u][v] + self.discount * self.sum_over_trans_value(s, u, v, other_agent_policy, horizon))
             ret_policy[s] = ret_policy[s]/np.sum(ret_policy[s])
             #ret_policy[r] = np.sum(ret_policy[s])
+            print ('ret_policy is \n', ret_policy)
         return ret_policy
 
             

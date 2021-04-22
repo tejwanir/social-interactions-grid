@@ -35,8 +35,9 @@ other_agent.reward = np.swapaxes(other_agent.reward,1,2)
 other_agent.transitions = np.swapaxes(other_agent.transitions,1,2)
 other_agent_model = np.zeros((states.shape[0], actions.shape[0])) 
 
+print ('Before other agent model is \n', other_agent_model)
 k = 3
-horizon = 3
+horizon = 5
 assumed_policy = np.full((states.shape[0], actions.shape[0]), 0.5)
 for i in range (0, k):
     levelk = other_agent.get_opposing_policy(assumed_policy, horizon)
@@ -46,7 +47,7 @@ for i in range (0, k):
 
 
 other_agent_model = other_agent_model/k
-print("\n\nThe computed other agent's model is: \n", other_agent_model)
+print("\n\nThe inferred other agent's model is: \n", other_agent_model)
 # print(other_agent_model)
 # # print(np.zeros((states.shape[0], actions.shape[0])))
 
