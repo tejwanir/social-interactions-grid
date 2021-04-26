@@ -218,7 +218,12 @@ class SocialWorldEnv(gym.Env):
             self.weak_pos[0] += delta[0]
             self.weak_pos[1] += delta[1]
 
-    def _collision_free(self, x, y):
+    def _collision_free(self, x, y, is_weak=False):
+        if is_weak:  # the weak agent cannot push the boulder or the strong agent
+            if self.grid[x][y][SocialWorldEnv.Items.BOULDER]:
+                return False
+            if self.strong_pos[0] == x and self.strong_pos[1] == y:
+                return False
         return self.grid[x][y][SocialWorldEnv.Items.WALL] == 0
 
     def _get_obs(self, agent_pos):
@@ -263,7 +268,7 @@ class SocialWorldEnv(gym.Env):
                     if np.random.choice([True, False], p=[self.weak_prob, 1.-self.weak_prob]) \
                     else (0,0)
         # update weak agent's position
-        if self._collision_free(self.weak_pos[0]+d_weak[0], self.weak_pos[1]+d_weak[1]):
+        if self._collision_free(self.weak_pos[0]+d_weak[0], self.weak_pos[1]+d_weak[1], is_weak=True):
             self.weak_pos[0] += d_weak[0]
             self.weak_pos[1] += d_weak[1]
         # update strong agent's position and related objects
