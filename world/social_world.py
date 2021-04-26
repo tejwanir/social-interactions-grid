@@ -249,14 +249,19 @@ class SocialWorldEnv(gym.Env):
         reward -= self._action_cost(action)
         return reward
 
-    def step(self, action_s, action_w):
-        # strong agent always succeed
-        d_strong = self.dir2del[action_s]
-        # weak agent successfully perform actions at probability p
-        # TODO: define the failure actions
-        d_weak = self.dir2del[action_w] \
-                if np.random.choice([True, False], p=[self.weak_prob, 1.-self.weak_prob]) \
-                else (0,0)
+    def step(self, action_s, action_w, pos_ctrl=False, pos_s=None, pos_w=None):
+        # compute the agent movement
+        if pos_ctrl:  # use position control or not, used to get training data
+            d_strong = np.array(pos_s) - np.array(self.strong_pos)
+            d_weak = np.array(pos_w) - np.array(self.weak_pos)
+        else:
+            # strong agent always succeed
+            d_strong = self.dir2del[action_s]
+            # weak agent successfully perform actions at probability p
+            # TODO: define the failure actions
+            d_weak = self.dir2del[action_w] \
+                    if np.random.choice([True, False], p=[self.weak_prob, 1.-self.weak_prob]) \
+                    else (0,0)
         # update weak agent's position
         if self._collision_free(self.weak_pos[0]+d_weak[0], self.weak_pos[1]+d_weak[1]):
             self.weak_pos[0] += d_weak[0]
