@@ -112,6 +112,7 @@ class SocialWorldEnv(gym.Env):
         self.weak_prob = weak_success_p
         self.weak_rho_g = weak_rho_g
         self.weak_delta_g = weak_delta_g
+        self.grid_size = grid.shape[0]
         # set up the action space
         self.actions = SocialWorldEnv.Actions
         self.action_space = spaces.Discrete(len(self.actions))
@@ -219,6 +220,9 @@ class SocialWorldEnv(gym.Env):
             self.weak_pos[1] += delta[1]
 
     def _collision_free(self, x, y, is_weak=False):
+        out_boundary = x < 0 or x >= self.grid_size or y < 0 or y >= self.grid_size
+        if out_boundary:  # handling the boundary conditions
+            return False
         if is_weak:  # the weak agent cannot push the boulder or the strong agent
             if self.grid[x][y][SocialWorldEnv.Items.BOULDER]:
                 return False
@@ -244,6 +248,79 @@ class SocialWorldEnv(gym.Env):
         goal_pos = np.array(goal_pos)
         dist = np.linalg.norm(agent_pos-goal_pos)
         return max(rho * (1-dist)/delta, 0)
+
+    def state2pos(self, state_idx):
+        grid_size = self.grid_size**2
+        strong_state_idx = state_idx % grid_size
+        weak_state_idx = state_idx / grid_size
+        xs = strong_state_idx % self.grid_size
+        ys = strong_state_idx / self.grid_size
+        xw = weak_state_idx % self.grid_size
+        yw = weak_state_idx / self.grid_size
+        return [xs, ys], [xw, yw]
+
+    def pos2state(self, strong_pos, weak_pos):
+        xs = strong_pos[0]; ys = strong_pos[1]
+        xw = weak_pos[0];   yw = weak_pos[1]
+        state_idx = (ys*self.grid_size + xs) + (self.grid_size**2) * (yw*self.grid_size + xw)
+        return int(state_idx)
+
+    def next_pos(self, pos, intend_action, is_weak):
+        intend_pos = None; other_pos = []
+        for action, delta in self.dir2del.items():
+            new_pos = pos.copy()
+            new_pos[0] += delta[0]; new_pos[0] = int(new_pos[0])
+            new_pos[1] += delta[1]; new_pos[1] = int(new_pos[1])
+            if not self._collision_free(new_pos[0], new_pos[1], is_weak=is_weak):
+                new_pos = pos.copy()
+                new_pos[0] = int(new_pos[0])
+                new_pos[1] = int(new_pos[1])
+            if action == intend_action:
+                intend_pos = new_pos
+            else:
+                other_pos.append(new_pos)
+        return intend_pos, other_pos
+
+    def get_trans_matrix(self, agent_type):
+        # returns a transition matrix: S x Ai x Aj x S'
+        n_actions = len(self.dir2del.keys())
+        trans_prob = np.zeros(((self.grid_size**2)**2, n_actions, n_actions, (self.grid_size**2)**2))
+        for i in range((self.grid_size**2)**2):
+            strong_pos, weak_pos = self.state2pos(i)
+            for action_s in self.dir2del.keys():
+                new_strong_pos, _ = self.next_pos(strong_pos, action_s, False)
+                for action_w in self.dir2del.keys():
+                    new_weak_pos, other_weak_pos = self.next_pos(weak_pos, action_w, True)
+                    # if the weak succeeds
+                    new_state_idx = self.pos2state(new_strong_pos, new_weak_pos)
+                    trans_prob[i][action_s][action_w][new_state_idx] += self.weak_prob
+                    # if the weak fails
+                    for new_weak_pos in other_weak_pos:
+                        new_state_idx = self.pos2state(new_strong_pos, new_weak_pos)
+                        trans_prob[i][action_s][action_w][new_state_idx] += \
+                            (1.-self.weak_prob) / (len(self.dir2del.keys())-1)
+        if agent_type == 'strong':
+            return trans_prob
+        else:  # swap axis if looking up from the weak agent's view
+            return np.swapaxes(trans_prob, 1, 2)
+
+    def get_reward_matrix(self, agent_type):
+        # returns a reward matrix S x Ai x Aj x 1
+        n_actions = len(self.dir2del.keys())
+        reward = np.zeros(((self.grid_size**2)**2, n_actions, n_actions, 1))
+        for i in range((self.grid_size**2)**2):
+            strong_pos, weak_pos = self.state2pos(i)
+            for action_s in self.dir2del.keys():
+                new_strong_pos, _ = self.next_pos(strong_pos, action_s, False)
+                for action_w in self.dir2del.keys():
+                    new_weak_pos, _ = self.next_pos(weak_pos, action_w, True)
+                    if agent_type == 'strong':
+                        reward[i][action_s][action_w][0] = self.compute_reward(new_strong_pos,
+                            self.strong_goal_pos, action_s, self.strong_rho_g, self.strong_delta_g)
+                    else:
+                        reward[i][action_w][action_s][0] = self.compute_reward(new_weak_pos,
+                            self.weak_goal_pos, action_w, self.weak_rho_g, self.weak_delta_g)
+        return reward
 
     def compute_reward(self, agent_pos, goal_pos, action, rho_g, delta_g):
         reward = 0
