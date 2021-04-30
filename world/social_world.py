@@ -1,8 +1,10 @@
 from enum import IntEnum
 from gym import spaces
+from PIL import Image
 
 import gym
 import numpy as np
+import os
 import pygame
 
 
@@ -247,7 +249,7 @@ class SocialWorldEnv(gym.Env):
         agent_pos = np.array(agent_pos)
         goal_pos = np.array(goal_pos)
         dist = np.linalg.norm(agent_pos-goal_pos)
-        return max(rho * (1-dist)/delta, 0)
+        return max(rho * (1.-dist/delta), 0)
 
     def state2pos(self, state_idx):
         grid_size = self.grid_size**2
@@ -304,6 +306,49 @@ class SocialWorldEnv(gym.Env):
         else:  # swap axis if looking up from the weak agent's view
             return np.swapaxes(trans_prob, 1, 2)
 
+    def get_observe_matrix(self, agent_type):
+        # returns a observation matrix of the other agent: S x Ai x S
+        n_actions = len(self.dir2del.keys())
+        weak_fail_prob = (1.-self.weak_prob) / (len(self.dir2del.keys())-1)
+        observe_prob = np.zeros(((self.grid_size**2)**2, n_actions, (self.grid_size**2)**2))
+        for i in range((self.grid_size**2)**2):
+            strong_pos, weak_pos = self.state2pos(i)
+            if agent_type == 'strong':
+                for action_s in self.dir2del.keys():
+                    sum_prob = 0
+                    new_strong_pos, _ = self.next_pos(strong_pos, action_s, False)
+                    for action_w in self.dir2del.keys():
+                        new_weak_pos, other_weak_pos = self.next_pos(weak_pos, action_w, True)
+                        # if the weak succeeds
+                        new_state_idx = self.pos2state(new_strong_pos, new_weak_pos)
+                        observe_prob[i][action_s][new_state_idx] += self.weak_prob
+                        sum_prob += self.weak_prob
+                        # if the weak fails
+                        for new_weak_pos in other_weak_pos:
+                            new_state_idx = self.pos2state(new_strong_pos, new_weak_pos)
+                            observe_prob[i][action_s][new_state_idx] += weak_fail_prob
+                            sum_prob += weak_fail_prob
+                    # normalize the probability
+                    observe_prob[i][action_s] /= sum_prob
+            else:
+                for action_w in self.dir2del.keys():
+                    sum_prob = 0
+                    new_weak_pos, other_weak_pos = self.next_pos(weak_pos, action_w, True)
+                    # if the weak succeeds
+                    for action_s in self.dir2del.keys():
+                        new_strong_pos, _ = self.next_pos(strong_pos, action_s, False)
+                        new_state_idx = self.pos2state(new_strong_pos, new_weak_pos)
+                        observe_prob[i][action_w][new_state_idx] += self.weak_prob
+                    # if the weak fails
+                    for new_weak_pos in other_weak_pos:
+                        for action_s in self.dir2del.keys():
+                            new_strong_pos, _ = self.next_pos(strong_pos, action_s, False)
+                            new_state_idx = self.pos2state(new_strong_pos, new_weak_pos)
+                            observe_prob[i][action_w][new_state_idx] += weak_fail_prob
+                    # normalize the probability
+                    observe_prob[i][action_w] /= sum_prob
+        return observe_prob
+
     def get_reward_matrix(self, agent_type):
         # returns a reward matrix S x Ai x Aj x 1
         n_actions = len(self.dir2del.keys())
@@ -315,17 +360,34 @@ class SocialWorldEnv(gym.Env):
                 for action_w in self.dir2del.keys():
                     new_weak_pos, _ = self.next_pos(weak_pos, action_w, True)
                     if agent_type == 'strong':
-                        reward[i][action_s][action_w][0] = self.compute_reward(new_strong_pos,
-                            self.strong_goal_pos, action_s, self.strong_rho_g, self.strong_delta_g)
+                        reward[i][action_s][action_w][0] = self.compute_reward(agent_type,
+                            new_strong_pos, self.strong_goal_pos, action_s,
+                            new_weak_pos, self.weak_goal_pos)
                     else:
-                        reward[i][action_w][action_s][0] = self.compute_reward(new_weak_pos,
-                            self.weak_goal_pos, action_w, self.weak_rho_g, self.weak_delta_g)
+                        reward[i][action_w][action_s][0] = self.compute_reward(agent_type,
+                            new_weak_pos, self.weak_goal_pos, action_w)
         return reward
 
-    def compute_reward(self, agent_pos, goal_pos, action, rho_g, delta_g):
+    def compute_reward(self, agent_type, agent_pos, goal_pos, action,
+                       other_pos=None, other_goal_pos=None):
+        if agent_type == 'strong':
+            rho_g = self.strong_rho_g
+            delta_g = self.strong_delta_g
+        else:
+            rho_g = self.weak_rho_g
+            delta_g = self.weak_delta_g
         reward = 0
-        if goal_pos is None:  # TODO: compute the social reward
-            pass
+        if goal_pos is None:  # compute the social reward for the strong agent
+            other_reward = self._object_reward(other_pos, other_goal_pos,
+                self.weak_rho_g, self.weak_delta_g)
+            max_reward = self.weak_rho_g * 1/self.weak_delta_g
+            # currently, the reward is a simple one purely based on the other agent's
+            # TODO: should reason about the possibility of the other agent reaching its goal
+            #       to attribute rewards correctly
+            if self.strong_goal == SocialWorldEnv.Goals.HELP:
+                reward = other_reward
+            else:
+                reward = max_reward - other_reward
         else:
             reward += self._object_reward(agent_pos, goal_pos, rho_g, delta_g)
         reward -= self._action_cost(action)
@@ -359,16 +421,20 @@ class SocialWorldEnv(gym.Env):
             (self.strong_goal == SocialWorldEnv.Goals.HELP and \
                 self.weak_pos == self.weak_goal_pos)
         done_weak = self.weak_pos == self.weak_goal_pos
-        reward_strong = self.compute_reward(self.strong_pos, self.strong_goal_pos, action_s,
-                                            self.strong_rho_g, self.strong_delta_g)
-        reward_weak = self.compute_reward(self.weak_pos, self.weak_goal_pos, action_w,
-                                          self.weak_rho_g, self.weak_delta_g)
+        reward_strong = self.compute_reward('strong', self.strong_pos,
+            self.strong_goal_pos, action_s, self.weak_pos, self.weak_goal_pos)
+        reward_weak = self.compute_reward('weak', self.weak_pos, self.weak_goal_pos, action_w)
         # extract features
         obs_strong = self._get_obs(self.strong_pos)
         obs_weak = self._get_obs(self.weak_pos)
         return (obs_strong, reward_strong, done_strong, {}), \
             (obs_weak, reward_weak, done_weak, {})
 
+    def save_fig(self, path):
+        self.gui.draw()
+        img_str = pygame.image.tostring(self.gui._screen, 'RGB')
+        img = Image.frombytes('RGB', self.gui._screen.get_size(), img_str)
+        img.save(path)
 
 if __name__ == '__main__':
     grid, strong_pos, strong_goal, weak_pos, weak_goal = \
